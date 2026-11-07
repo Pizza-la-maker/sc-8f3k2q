@@ -50,7 +50,10 @@ button:disabled{opacity:.55;cursor:default}
 .capture input{position:absolute;width:1px;height:1px;opacity:0}
 .status{border-radius:12px;padding:12px 14px;display:flex;gap:12px;align-items:center;background:var(--accent-soft)}
 .status.warn{background:var(--warn-soft);color:var(--ink)}
-.status img{width:56px;height:72px;object-fit:cover;border-radius:6px;border:1px solid var(--line);flex:none}
+.status-col{display:flex;flex-direction:column;gap:4px;min-width:0}
+.scan-row{display:flex;flex-wrap:wrap;gap:4px 10px;align-items:baseline;font-size:13px;color:var(--muted)}
+button.link{background:none;border:none;padding:0;min-height:0;color:var(--accent-text);font-weight:600;text-decoration:underline;text-underline-offset:2px;cursor:pointer;font-size:13px}
+.status img{width:56px;height:72px;object-fit:contain;background:#fff;border-radius:6px;border:1px solid var(--line);flex:none}
 .spinner{width:18px;height:18px;border-radius:50%;border:2.5px solid var(--line);border-top-color:var(--accent);animation:spin .8s linear infinite;flex:none}
 @keyframes spin{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){.spinner{animation-duration:2.4s}}
@@ -67,7 +70,7 @@ textarea{min-height:64px;resize:vertical}
 .form-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
 .form-actions{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap}
 .receipt-thumb{display:flex;gap:10px;align-items:center;font-size:13px;color:var(--muted)}
-.receipt-thumb img{width:44px;height:56px;object-fit:cover;border-radius:5px;border:1px solid var(--line)}
+.receipt-thumb img{width:44px;height:56px;object-fit:contain;background:#fff;border-radius:5px;border:1px solid var(--line)}
 .month-bar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
 .month-nav{display:flex;align-items:center;gap:4px}
 .month-nav strong{font-family:var(--display);font-size:19px;min-width:150px;text-align:center}
@@ -81,7 +84,7 @@ textarea{min-height:64px;resize:vertical}
 .ledger{list-style:none;margin:0;padding:0;display:flex;flex-direction:column}
 .ledger li{display:grid;grid-template-columns:44px 1fr auto;gap:12px;align-items:center;padding:12px 0;border-top:1px dashed var(--line)}
 .ledger li:first-child{border-top:none}
-.ledger .thumb{width:44px;height:56px;border-radius:5px;object-fit:cover;border:1px solid var(--line);background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--muted)}
+.ledger .thumb{width:44px;height:56px;border-radius:5px;object-fit:contain;border:1px solid var(--line);background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--muted)}
 .ledger .meta{min-width:0}
 .ledger .merchant{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ledger .detail{font-size:13px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -265,12 +268,13 @@ function parseReceipt(raw, todayISO){
 
   // ---- date ----
   let date=null;
+  const mon=t=>t.toLowerCase().replace(/0/g,"o").replace(/1/g,"l");   // OCR often reads O as 0 and l as 1
   for(const l of lines){
     let m;
     if((m=l.match(/\b(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})\b/)))date=validDate(+m[1],+m[2],+m[3]);
     if(!date&&(m=l.match(/\b(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})\b/)))date=validDate(+m[3],+m[2],+m[1]);
-    if(!date&&(m=l.match(/\b(\d{1,2})[\s\-\/.]*([A-Za-z]{3,4})[A-Za-z]*[\s\-\/.,]*(\d{2,4})\b/))&&MONTHS[m[2].toLowerCase()])date=validDate(+m[3],MONTHS[m[2].toLowerCase()],+m[1]);
-    if(!date&&(m=l.match(/\b([A-Za-z]{3,4})[A-Za-z]*\s+(\d{1,2}),?\s+(\d{4})\b/))&&MONTHS[m[1].toLowerCase()])date=validDate(+m[3],MONTHS[m[1].toLowerCase()],+m[2]);
+    if(!date&&(m=l.match(/\b(\d{1,2})[\s\-\/.]*([A-Za-z0][A-Za-z01]{2,3})[A-Za-z]*[\s\-\/.,]*(\d{2,4})\b/))&&MONTHS[mon(m[2])])date=validDate(+m[3],MONTHS[mon(m[2])],+m[1]);
+    if(!date&&(m=l.match(/\b([A-Za-z0][A-Za-z01]{2,3})[A-Za-z]*\s+(\d{1,2}),?\s+(\d{4})\b/))&&MONTHS[mon(m[1])])date=validDate(+m[3],MONTHS[mon(m[1])],+m[2]);
     if(date)break;
   }
   if(date)out.date=date;
@@ -421,6 +425,102 @@ $("#form").addEventListener("submit",async e=>{
   finally{$("#save").disabled=false}
 });
 
+/* ---------- receipt scanner: find the paper, cut away the background, straighten, whiten ---------- */
+function scanReceipt(img){
+  // 1. Work on a small copy to find the receipt
+  const big=Math.max(img.width,img.height), ws=Math.min(1,360/big);
+  const W=Math.max(1,Math.round(img.width*ws)), H=Math.max(1,Math.round(img.height*ws));
+  const wc=document.createElement("canvas");wc.width=W;wc.height=H;
+  const wg=wc.getContext("2d",{willReadFrequently:true});wg.drawImage(img,0,0,W,H);
+  const px=wg.getImageData(0,0,W,H).data, N=W*H, g=new Uint8Array(N);
+  for(let i=0;i<N;i++)g[i]=(px[i*4]*299+px[i*4+1]*587+px[i*4+2]*114)/1000;
+
+  // 2. Paper is the bright part: Otsu threshold
+  const hist=new Array(256).fill(0);for(let i=0;i<N;i++)hist[g[i]]++;
+  let sum=0;for(let i=0;i<256;i++)sum+=i*hist[i];
+  let sB=0,wB=0,best=0,t=128;
+  for(let i=0;i<256;i++){wB+=hist[i];if(!wB)continue;const wF=N-wB;if(!wF)break;sB+=i*hist[i];const mB=sB/wB,mF=(sum-sB)/wF,v=wB*wF*(mB-mF)*(mB-mF);if(v>best){best=v;t=i}}
+  const mask=new Uint8Array(N);for(let i=0;i<N;i++)mask[i]=g[i]>t?1:0;
+  // close small gaps (printed text) so the receipt is one solid piece
+  const dil=new Uint8Array(N);
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){const i=y*W+x;if(mask[i]){dil[i]=1;continue}
+    if((x>0&&mask[i-1])+(x<W-1&&mask[i+1])+(y>0&&mask[i-W])+(y<H-1&&mask[i+W])>=2)dil[i]=1}
+
+  // 3. Largest bright region
+  const lab=new Int32Array(N),stack=new Int32Array(N);let bestLab=0,bestSize=0,cur=0;
+  for(let s=0;s<N;s++){if(!dil[s]||lab[s])continue;cur++;let sp=0,size=0;stack[sp++]=s;lab[s]=cur;
+    while(sp){const i=stack[--sp];size++;const x=i%W;
+      if(x>0&&dil[i-1]&&!lab[i-1]){lab[i-1]=cur;stack[sp++]=i-1}
+      if(x<W-1&&dil[i+1]&&!lab[i+1]){lab[i+1]=cur;stack[sp++]=i+1}
+      if(i>=W&&dil[i-W]&&!lab[i-W]){lab[i-W]=cur;stack[sp++]=i-W}
+      if(i<N-W&&dil[i+W]&&!lab[i+W]){lab[i+W]=cur;stack[sp++]=i+W}}
+    if(size>bestSize){bestSize=size;bestLab=cur}}
+  const share=bestSize/N;
+  if(share<0.06||share>0.94)return{canvas:null,found:false};   // no clear receipt, or the paper fills the photo already
+
+  // 4. Four corners = extreme points of the region
+  let tl=[0,0,1e9],tr=[0,0,-1e9],br=[0,0,-1e9],bl=[0,0,1e9],edge=0;
+  for(let i=0;i<N;i++){if(lab[i]!==bestLab)continue;const x=i%W,y=(i-x)/W,s=x+y,d=x-y;
+    if(s<tl[2])tl=[x,y,s];if(s>br[2])br=[x,y,s];if(d>tr[2])tr=[x,y,d];if(d<bl[2])bl=[x,y,d];
+    if(x===0||y===0||x===W-1||y===H-1)edge++}
+  const Q=[tl,tr,br,bl].map(p=>[p[0]+0.5,p[1]+0.5]);
+  const area=Math.abs(Q.reduce((a,p,i)=>{const q=Q[(i+1)%4];return a+p[0]*q[1]-q[0]*p[1]},0))/2;
+  const fit=bestSize/Math.max(1,area);
+  if(fit<0.7||fit>1.3||edge>(W+H)*0.9)return{canvas:null,found:false};   // not a clean four-sided sheet
+
+  // 5. Straighten: map the quad to a rectangle at full resolution
+  const fs=Math.min(1,2200/big), SW=Math.round(img.width*fs), SH=Math.round(img.height*fs);
+  const sc=document.createElement("canvas");sc.width=SW;sc.height=SH;
+  const sg=sc.getContext("2d",{willReadFrequently:true});sg.drawImage(img,0,0,SW,SH);
+  const src=sg.getImageData(0,0,SW,SH).data;
+  const k=SW/W, P=Q.map(([x,y])=>[x*k,y*k]);
+  // grow 1% outward so the paper edge is not clipped
+  const cx=(P[0][0]+P[1][0]+P[2][0]+P[3][0])/4, cy=(P[0][1]+P[1][1]+P[2][1]+P[3][1])/4;
+  P.forEach(p=>{p[0]=Math.min(SW-1,Math.max(0,cx+(p[0]-cx)*1.01));p[1]=Math.min(SH-1,Math.max(0,cy+(p[1]-cy)*1.01))});
+  const dist=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1]);
+  let ow=Math.max(dist(P[0],P[1]),dist(P[3],P[2])), oh=Math.max(dist(P[0],P[3]),dist(P[1],P[2]));
+  const cap=Math.min(1,1800/Math.max(ow,oh));ow=Math.max(1,Math.round(ow*cap));oh=Math.max(1,Math.round(oh*cap));
+  const Hm=homography([[0,0],[ow,0],[ow,oh],[0,oh]],P);
+  const out=document.createElement("canvas");out.width=ow;out.height=oh;
+  const og=out.getContext("2d");const od=og.createImageData(ow,oh),o=od.data;
+  const gray=new Float32Array(ow*oh);
+  for(let y=0;y<oh;y++)for(let x=0;x<ow;x++){
+    const z=Hm[6]*x+Hm[7]*y+1, sx=(Hm[0]*x+Hm[1]*y+Hm[2])/z, sy=(Hm[3]*x+Hm[4]*y+Hm[5])/z;
+    const x0=Math.max(0,Math.min(SW-2,Math.floor(sx))), y0=Math.max(0,Math.min(SH-2,Math.floor(sy))), fx=Math.min(1,Math.max(0,sx-x0)), fy=Math.min(1,Math.max(0,sy-y0));
+    const i00=(y0*SW+x0)*4,i10=i00+4,i01=i00+SW*4,i11=i01+4;
+    const L=i=>src[i]*0.299+src[i+1]*0.587+src[i+2]*0.114;
+    gray[y*ow+x]=(L(i00)*(1-fx)+L(i10)*fx)*(1-fy)+(L(i01)*(1-fx)+L(i11)*fx)*fy;
+  }
+
+  // 6. Scanner look: estimate the paper's brightness per area (brightest pixels in each block),
+  //    divide it out to remove shadows, then deepen the ink
+  const B=Math.max(12,Math.round(Math.min(ow,oh)/18)), bx=Math.ceil(ow/B), by=Math.ceil(oh/B), blk=new Float32Array(bx*by);
+  for(let j=0;j<by;j++)for(let i=0;i<bx;i++){let m=0;
+    for(let y=j*B;y<Math.min(oh,(j+1)*B);y+=2)for(let x=i*B;x<Math.min(ow,(i+1)*B);x+=2){const v=gray[y*ow+x];if(v>m)m=v}
+    blk[j*bx+i]=m}
+  const sm=new Float32Array(bx*by);                     // soften between blocks
+  for(let j=0;j<by;j++)for(let i=0;i<bx;i++){let t=0,n=0;for(let dj=-1;dj<=1;dj++)for(let di=-1;di<=1;di++){const u=i+di,w=j+dj;if(u>=0&&w>=0&&u<bx&&w<by){t+=blk[w*bx+u];n++}}sm[j*bx+i]=Math.max(blk[j*bx+i]*0.9,t/n)}
+  for(let y=0;y<oh;y++){const fy=Math.min(by-1.001,Math.max(0,y/B-0.5)),j0=Math.floor(fy),ty=fy-j0,j1=Math.min(by-1,j0+1);
+    for(let x=0;x<ow;x++){const fx=Math.min(bx-1.001,Math.max(0,x/B-0.5)),i0=Math.floor(fx),tx=fx-i0,i1=Math.min(bx-1,i0+1);
+      const bg=(sm[j0*bx+i0]*(1-tx)+sm[j0*bx+i1]*tx)*(1-ty)+(sm[j1*bx+i0]*(1-tx)+sm[j1*bx+i1]*tx)*ty;
+      let v=gray[y*ow+x]/Math.max(1,bg*0.96);           // ~1 = paper, lower = ink
+      v=Math.min(1,v);v=Math.pow(v,2.4);
+      const c=Math.round(v*255),k2=(y*ow+x)*4;o[k2]=o[k2+1]=o[k2+2]=c;o[k2+3]=255}}
+  og.putImageData(od,0,0);
+  return{canvas:out,found:true};
+}
+// 3x3 perspective transform taking points `from` to points `to` (4 pairs)
+function homography(from,to){
+  const A=[],b=[];
+  for(let i=0;i<4;i++){const [x,y]=from[i],[u,v]=to[i];
+    A.push([x,y,1,0,0,0,-u*x,-u*y]);b.push(u);
+    A.push([0,0,0,x,y,1,-v*x,-v*y]);b.push(v)}
+  for(let c=0;c<8;c++){let p=c;for(let r=c+1;r<8;r++)if(Math.abs(A[r][c])>Math.abs(A[p][c]))p=r;
+    [A[c],A[p]]=[A[p],A[c]];[b[c],b[p]]=[b[p],b[c]];
+    for(let r=0;r<8;r++){if(r===c)continue;const f=A[r][c]/A[c][c];for(let k=c;k<8;k++)A[r][k]-=f*A[c][k];b[r]-=f*b[c]}}
+  return b.map((v,i)=>v/A[i][i]);
+}
+
 /* ---------- receipt capture + on-phone reading (OCR) ---------- */
 function loadImage(file){return new Promise((res,rej)=>{const url=URL.createObjectURL(file),img=new Image();img.onload=()=>{res(img);setTimeout(()=>URL.revokeObjectURL(url),1000)};img.onerror=()=>{URL.revokeObjectURL(url);rej(new Error("bad image"))};img.src=url})}
 function photoFrom(img){
@@ -452,11 +552,26 @@ async function handleFile(file){
   const st=$("#status");st.className="status";st.hidden=false;st.innerHTML="";
   let img;
   try{img=await loadImage(file)}catch{st.className="status warn";st.textContent="That file isn't a photo the app can open. Try a JPG or PNG.";return}
-  pendingThumb=thumbFrom(img);pendingPhoto=photoFrom(img);showThumb(pendingThumb);
-  const th=new Image();th.src=pendingThumb;th.alt="";
+  // Cut the receipt out of its background, straighten it and whiten it like a scan
+  let scan=null;try{scan=scanReceipt(img)}catch{}
+  const versions={original:{thumb:thumbFrom(img),photo:photoFrom(img)}};
+  if(scan&&scan.found)versions.scanned={thumb:thumbFrom(scan.canvas),photo:photoFrom(scan.canvas)};
+  let using=versions.scanned?"scanned":"original";
+  const th=new Image();th.alt="";
+  const apply=()=>{pendingThumb=versions[using].thumb;pendingPhoto=versions[using].photo;th.src=pendingThumb;showThumb(pendingThumb)};
+  apply();
   const sp=document.createElement("div");sp.className="spinner";
+  const col=document.createElement("div");col.className="status-col";
   const tx=document.createElement("span");tx.textContent="Reading your receipt…";
-  st.append(th,sp,tx);
+  const scanRow=document.createElement("div");scanRow.className="scan-row";
+  const scanNote=document.createElement("span");
+  const swap=Object.assign(document.createElement("button"),{type:"button",className:"link"});
+  const showScan=()=>{scanNote.textContent=using==="scanned"?"Background removed.":versions.scanned?"Using the original photo.":"Couldn't find the receipt's edges, so the full photo is kept.";
+    swap.textContent=using==="scanned"?"Use original photo":"Use scanned version";swap.hidden=!versions.scanned};
+  swap.onclick=()=>{using=using==="scanned"?"original":"scanned";apply();showScan()};
+  showScan();scanRow.append(scanNote,swap);
+  col.append(tx,scanRow);
+  st.append(th,sp,col);
   const firstTime=!ls.get("snapclaim.ocrReady",false);
   try{
     const w=await getWorker(m=>{
@@ -464,7 +579,7 @@ async function handleFile(file){
       else if(firstTime)tx.textContent="Setting up the receipt reader (first time only, about 10 MB)…";
     });
     ls.set("snapclaim.ocrReady",true);
-    const {data}=await w.recognize(ocrCanvas(img));
+    const {data}=await w.recognize(ocrCanvas(versions.scanned?scan.canvas:img));
     const text=data.text||"";
     $("#raw").textContent=text.trim()||"(no text found)";$("#raw-box").hidden=false;
     const d=parseReceipt(text,today());
